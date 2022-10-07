@@ -1,0 +1,1179 @@
+// @version=5
+// @Author andre_007
+// @description Moving Averages Proxy (library of libraries)
+// @Thanks and credits: 
+//      TradingView
+//      PineCoders
+//      CrackingCryptocurrency
+//      MightyZinger
+//      Alex Orekhov (everget)
+//      alexgrover
+//      paragjyoti2012
+//      Franklin Moormann (cheatcountry)
+
+// @description Moving Averages Proxy - Library of all moving averages spread out in different libraries 
+library("MovingAveragesProxy", overlay=true)
+
+import PineCoders/ConditionalAverages/1 as pc
+
+// ———————————————————————————————————————— Constants {
+// --> Rolling VWAP
+var int MS_IN_MIN   = 60 * 1000
+var int MS_IN_HOUR  = MS_IN_MIN  * 60
+var int MS_IN_DAY   = MS_IN_HOUR * 24
+
+// Moving Averages Types
+var string AARMA    = 'Adaptive Autonomous Recursive Moving Average'
+var string ADEMA    = '* Alpha-Decreasing Exponential Moving Average'
+var string AHMA     = 'Ahrens Moving Average'
+var string ALMA     = 'Arnaud Legoux Moving Average'
+var string ALSMA    = 'Adaptive Least Squares'
+var string AUTOL    = 'Auto-Line'
+var string CMA      = 'Corrective Moving average'
+var string CORMA    = 'Correlation Moving Average Price'
+var string COVWEMA  = 'Coefficient of Variation Weighted Exponential Moving Average'
+var string COVWMA   = 'Coefficient of Variation Weighted Moving Average'
+var string DEMA     = 'Double Exponential Moving Average'
+var string DONCHIAN = 'Donchian Middle Channel'
+var string EDMA     = 'Exponentially Deviating Moving Average'
+var string EDSMA    = 'Ehlers Dynamic Smoothed Moving Average'
+var string EFRAMA   = '* Ehlrs Modified Fractal Adaptive Moving Average'
+var string EHMA     = 'Exponential Hull Moving Average'
+var string EMA      = 'Exponential Moving Average'
+var string EPMA     = 'End Point Moving Average'
+var string ETMA     = 'Exponential Triangular Moving Average'
+var string EVWMA    = 'Elastic Volume Weighted Moving Average'
+var string FAMA     = 'Following Adaptive Moving Average'
+var string FIBOWMA  = 'Fibonacci Weighted Moving Average'
+var string FISHLSMA = 'Fisher Least Squares Moving Average'
+var string FRAMA    = 'Fractal Adaptive Moving Average'
+var string GMA      = 'Geometric Moving Average'
+var string HKAMA    = 'Hilbert based Kaufman\'s Adaptive Moving Average'
+var string HMA      = 'Hull Moving Average'
+var string JURIK    = 'Jurik Moving Average'
+var string KAMA     = 'Kaufman\'s Adaptive Moving Average'
+var string LC_LSMA  = '1LC-LSMA (1 line code lsma with 3 functions)'
+var string LEOMA    = 'Leo Moving Average'
+var string LINWMA   = 'Linear Weighted Moving Average'
+var string LSMA     = 'Least Squares Moving Average'
+var string MAMA     = 'MESA Adaptive Moving Average'
+var string MCMA     = 'McNicholl Moving Average'
+var string MEDIAN   = 'Median'
+var string REGMA    = 'Regularized Exponential Moving Average'
+var string REMA     = 'Range EMA'
+var string REPMA    = 'Repulsion Moving Average'
+var string RMA      = 'Relative Moving Average'
+var string RSIMA    = 'RSI Moving average'
+var string RVWAP    = '* Rolling VWAP'
+var string SMA      = 'Simple Moving Average'
+var string SMMA     = 'Smoothed Moving Average'
+var string SRWMA    = 'Square Root Weighted Moving Average'
+var string SW_MA    = 'Sine-Weighted Moving Average'
+var string SWMA     = '* Symmetrically Weighted Moving Average'
+var string TEMA     = 'Triple Exponential Moving Average'
+var string THMA     = 'Triple Hull Moving Average'
+var string TREMA    = 'Triangular Exponential Moving Average'
+var string TRSMA    = 'Triangular Simple Moving Average'
+var string TT3      = 'Tillson T3'
+var string VAMA     = 'Volatility Adjusted Moving Average'
+var string VIDYA    = 'Variable Index Dynamic Average'
+var string VWAP     = '* VWAP'
+var string VWMA     = 'Volume-weighted Moving Average'
+var string WMA      = 'Weighted Moving Average'
+var string WWMA     = 'Welles Wilder Moving Average'
+var string XEMA     = 'Optimized Exponential Moving Average'
+var string ZEMA     = 'Zero-Lag Exponential Moving Average'
+var string ZSMA     = 'Zero-Lag Simple Moving Average'
+// ———————————————————————————————————————— }
+
+// ———————————————————————————————————————— Functions {
+// @function Used internally in rvwap(). Determines a time period from the chart's timeframe.
+// @returns (int) A value of time in milliseconds that is appropriate for the current chart timeframe. To be used in the RVWAP calculation.
+timeStep() =>
+    int tfInMs = timeframe.in_seconds() * 1000
+    float step =
+      switch
+        tfInMs <= MS_IN_MIN        => MS_IN_HOUR
+        tfInMs <= MS_IN_MIN * 5    => MS_IN_HOUR * 4
+        tfInMs <= MS_IN_HOUR       => MS_IN_DAY * 1
+        tfInMs <= MS_IN_HOUR * 4   => MS_IN_DAY * 3
+        tfInMs <= MS_IN_HOUR * 12  => MS_IN_DAY * 7
+        tfInMs <= MS_IN_DAY        => MS_IN_DAY * 30.4375
+        tfInMs <= MS_IN_DAY * 7    => MS_IN_DAY * 90
+        => MS_IN_DAY * 365
+    int result = int(step)     
+
+// @function                    Calculates the Rolling VWAP (customized VWAP developed by the team of TradingView)
+// @param _src                  (float) Source. Default: close
+// @param fixedTfInput          (bool) Use a fixed time period. Default: false
+// @param minsInput             (int) Minutes. Default: 0
+// @param hoursInput            (int) Hours. Default: 0
+// @param daysInput             (int) Days. Default: 1
+// @param minBarsInput          (int) Bars. Default: 10
+// @returns                     (float) Rolling VWAP
+export rvwap(series float _src=close, simple bool fixedTfInput=false, simple int minsInput=0, simple int hoursInput=0, simple int daysInput=1, simple int minBarsInput=10) =>
+    
+    // Stop the indicator on charts with no volume.
+    if barstate.islast and ta.cum(nz(volume)) == 0
+        runtime.error("No volume is provided by the data vendor.")
+    
+    _daysInput   = daysInput * MS_IN_MIN 
+    _hoursInput  = hoursInput * MS_IN_HOUR
+    _minsInput   = minsInput * MS_IN_DAY     
+    
+    // RVWAP + stdev bands
+    var int timeInMs   = fixedTfInput ? _minsInput + _hoursInput + _daysInput : timeStep()
+    
+    float sumSrcVol    = pc.totalForTimeWhen(_src * volume, timeInMs, true, minBarsInput)
+    float sumVol       = pc.totalForTimeWhen(volume, timeInMs, true, minBarsInput)
+    float sumSrcSrcVol = pc.totalForTimeWhen(volume * math.pow(_src, 2), timeInMs, true, minBarsInput)
+    
+    float rollingVWAP  = sumSrcVol / sumVol
+    
+// @function Correlation Moving Average
+// @param src                   (float) Source. Default: close
+// @param len                   (int) Length
+// @param factor                (float) Factor. Default: 1.7
+// @returns                     (float) Correlation Moving Average
+export correlationMa(float src, simple int len, simple float factor=1.7) =>
+    ma = ta.sma(src, len) + ta.correlation(src, bar_index, len) * ta.stdev(src, len) * factor    
+
+// @function                    Regularized Exponential Moving Average
+// @param src                   (float) Source. Default: close
+// @param len                   (int) Length
+// @param lambda                (float) Lambda. Default: 0.5
+// @returns                     (float) Regularized Exponential Moving Average
+export regma(float src, simple int len, simple float lambda=0.5) =>
+    var float alpha = 2 / (len + 1)
+    var float ma = 0.0
+    ma := (nz(ma[1]) + alpha * (src - nz(ma[1])) + lambda * (2 * nz(ma[1]) - nz(ma[2]))) / (lambda + 1)
+    
+// @function                    Repulsion Moving Average
+// @param src                   (float) Source. Default: close
+// @param len                   (int) Length
+// @returns                     (float) Repulsion Moving Average
+export repma(float src, simple int len) => 
+    ta.sma(src, len*3) + ta.sma(src, len*2) - ta.sma(src, len)
+
+// @function                    End Point Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @param offset                (float) Offset. Default: 4
+// @returns                     (float) End Point Moving Average
+export epma(float src, simple int length, int offset=4) =>
+    float sum = 0.0
+    float weightSum = 0.0
+    
+    for i = 0 to length - 1
+        weight = length - i - offset
+        sum := sum + (src[i] * weight)
+        weightSum := weightSum + weight
+    
+    epma = 1 / weightSum * sum
+
+// @function                    1LC-LSMA (1 line code lsma with 3 functions)
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) 1LC-LSMA Moving Average    
+export lc_lsma(series float src, simple int length) =>
+    ta.sma(src, length) + ta.correlation(src, bar_index, length) * ta.stdev(src, length) * 1.7
+
+// @function                    Used in Adaptive Autonomous Recursive Moving Average
+// @param x                     (float) Source. Default: close
+// @param er                    (int) Length
+// @returns                     Adaptive Autonomous Moving Average
+ama(series float x, series float er) =>
+    float a = 0
+    a := er * x + (1-er) * nz(a[1], x)
+
+// @function                    Adaptive Autonomous Recursive Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Adaptive Autonomous Recursive Moving Average
+export aarma(series float src, simple int length, simple float gamma=3) =>
+    er = math.abs(ta.change(src, length)) / math.sum(math.abs(ta.change(src)), length)
+
+    var float ma = 0
+    d = ta.cum(math.abs(src - nz(ma[1], src))) / bar_index * gamma
+    ma := ama( ama(src > nz(ma[1],src) + d ? src + d : src < nz(ma[1],src) - d ? src - d : nz(ma[1],src), er), er )
+
+// @function                    Used in alsma
+m(alpha, a) =>
+    float p = na
+    p := alpha * a + (1-alpha) * nz(p[1],a)
+
+// @function                    Adaptive Least Squares
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Adaptive Least Squares
+export alsma(series float src, simple int length=500, simple float smooth=1.5) =>
+    alpha = math.pow(ta.tr/ta.highest(ta.tr, length), smooth)
+
+    //
+    x = bar_index
+    y = src
+    x_ = m(alpha, x)
+    y_ = m(alpha, y)
+    //
+    dx = math.abs(x-x_)
+    dy = math.abs(y-y_)
+    mx = m(alpha, dx)
+    my = m(alpha, dy)
+    //
+    a1 = math.pow(2/alpha+1,2)*m(alpha, x*y) - ((2/alpha+1)*m(alpha, x))*((2/alpha+1)*m(alpha, y))
+    b1 = math.sqrt((math.pow(2/alpha+1,2)*m(alpha, x*x) - math.pow((2/alpha+1)*m(alpha, x),2)) * (math.pow(2/alpha+1,2)*m(alpha, y*y) - math.pow((2/alpha+1)*m(alpha, y),2)))
+    r = a1/b1
+    //
+    a = r * (my/mx)
+    b = y_ - a*x_
+    reg = x*a + b
+    
+// @function                    Ahrens Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Ahrens Moving Average
+export ahma(series float src, simple int length=9) =>
+    var float ahma = 0.0
+    ahma := nz(ahma[1]) + (src - (nz(ahma[1]) + nz(ahma[length])) / 2) / length
+    
+// @function                    Ahrens Moving Average
+// @param src                   (float) Source. Default: close
+// @returns                     (float) Moving Average
+export adema(series float src) =>
+    alpha = 2 / (int(bar_index) + 1)
+
+    ema = src
+    ema := alpha * ema + (1 - alpha) * nz(ema[1], ema)
+    
+// @function                    Auto-Line
+// @param src                   (float) Source. Default: close
+// @param lenDev                (int) Length for standard deviation
+// @returns                     (float) Auto-Line
+export autol(series float src, simple int lenDev=500) =>
+    r = ta.sma(src, 14)
+    dev = ta.stdev(src, lenDev)
+    float a = na
+    a := src > nz(a[1],r) + dev ? src : src < nz(a[1],r) - dev ? src : a[1]
+    
+// @function                    Fibo Weight
+// @param phi                   (int) phi
+// @param i                     (float) Index
+// @returns                     (float) Fibo Weight
+fiboWeight(phi, i) =>
+    pow = math.pow(phi, i)
+    (pow - math.pow(-1, i) / pow) / math.sqrt(5)
+
+// @function                    Fibonacci Weighted Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Moving Average
+export fibowma(float src=close, int length=14) =>
+
+    phi = (1 + math.sqrt(5)) / 2
+
+    sum = 0.0
+    weightSum = 0.0
+
+    for i = 0 to length - 1
+        weight = fiboWeight(phi, length - i)
+        sum := sum + nz(src[i]) * weight
+        weightSum := weightSum + weight
+
+    sum / weightSum
+
+// @function                    Fisher Least Squares Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Moving Average
+export fisherlsma(float src=close, int length=100) =>
+    n = bar_index
+
+    b = 0.0
+
+    e = ta.sma(math.abs(src - nz(b[1])), length)
+    z = ta.sma(src - nz(b[1], src), length) / e 
+    r = (math.exp(2*z) - 1) / (math.exp(2*z) + 1) 
+    a = (n - ta.sma(n, length)) / ta.stdev(n, length) * r
+    b := ta.sma(src, length) + a*ta.stdev(src, length)
+
+// @function                    Leo Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Moving Average
+export leoma(float src, int length) =>
+    lma = 2 * ta.wma(src, length) - ta.sma(src, length)    
+
+// @function                    Linear Weighted Moving Average
+// @param src                   (float) Source. Default: close
+// @param period                (int) Length
+// @param weight                (int) Weight
+// @returns                     (float) Moving Average    
+export linwma(float src, int period, simple int weight=6) =>
+    price = src
+    sub = (weight/period)-1
+    float p = na
+    float d = na
+    float sum = 0
+    float divider = 0
+    for i = 0 to period-1
+        p := price[i] * ((weight-i)-sub)
+        d := (weight-i)-sub
+        sum := sum + p
+        divider := divider + d
+    sum / divider    
+
+// @function                    McNicholl Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Moving Average 
+export mcma(float src, int length) =>
+    alpha = 2 / (length + 1)
+    
+    ema1 = ta.ema(src, length)
+    ema2 = ta.ema(ema1, length)
+    
+    mnma = ((2 - alpha) * ema1 - ema2) / (1 - alpha)
+
+// @function                    Square Root Weighted Moving Average
+// @param src                   (float) Source. Default: close
+// @param length                (int) Length
+// @returns                     (float) Moving Average 
+export srwma(float src, int length) =>
+    sum = 0.0, weightSum = 0.0
+    for i = 0 to length - 1
+        weight = math.pow(length - i, 0.5)
+        sum := sum + (src[i] * weight)
+        weightSum := weightSum + weight
+    srwma = sum / weightSum
+
+// Ehlers Dynamic Smoothed Moving Average
+ssfLength = 20 //input(title="* EDSMA - Super Smoother Filter Length", type=input.integer, minval=1, defval=20)
+ssfPoles = 2 //input(title="* EDSMA - Super Smoother Filter Poles", type=input.integer, defval=2, options=[2, 3])
+
+get2PoleSSF(src, length) =>
+    PI = 2 * math.asin(1)
+    arg = math.sqrt(2) * PI / length
+    a1 = math.exp(-arg)
+    b1 = 2 * a1 * math.cos(arg)
+    c2 = b1
+    c3 = -math.pow(a1, 2)
+    c1 = 1 - c2 - c3
+    
+    ssf = 0.0
+    ssf := c1 * src + c2 * nz(ssf[1]) + c3 * nz(ssf[2])
+
+get3PoleSSF(src, length) =>
+    PI = 2 * math.asin(1)
+
+    arg = PI / length
+    a1 = math.exp(-arg)
+    b1 = 2 * a1 * math.cos(1.738 * arg)
+    c1 = math.pow(a1, 2)
+
+    coef2 = b1 + c1
+    coef3 = -(c1 + b1 * c1)
+    coef4 = math.pow(c1, 2)
+    coef1 = 1 - coef2 - coef3 - coef4
+
+    ssf = 0.0
+    ssf := coef1 * src + coef2 * nz(ssf[1]) + coef3 * nz(ssf[2]) + coef4 * nz(ssf[3])
+
+// @function Ehlers Dynamic Smoothed Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns EDSMA smoothing.
+export EDSMA(float src=close, simple int len) =>
+    float result = 0.0
+    zeros = src - nz(src[2])
+    avgZeros = (zeros + zeros[1]) / 2
+    ssf = ssfPoles == 2
+         ? get2PoleSSF(avgZeros, ssfLength)
+         : get3PoleSSF(avgZeros, ssfLength)
+    // Rescale filter in terms of Standard Deviations
+    stdev = ta.stdev(ssf, len)
+    scaledFilter = stdev != 0
+         ? ssf / stdev
+         : 0
+    alpha = 5 * math.abs(scaledFilter) / len
+    edsma = 0.0
+    edsma := alpha * src + (1 - alpha) * nz(edsma[1])
+    result := edsma
+
+// @function Double Exponential Moving Average.
+// @param x Series to use ('close' is used if no argument is supplied).
+// @param t Lookback length to use.
+// @returns DEMA smoothing.
+export dema(float x=close, simple int t) =>
+    dema = 2*ta.ema(x, t) - ta.ema(ta.ema(x, t), t)
+    
+// @function Triple Exponential Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns TEMA smoothing.
+export tema(float src = close, simple int len) =>
+    ema1 = ta.ema(src, len)
+    ema2 = ta.ema(ema1, len)
+    ema3 = ta.ema(ema2, len)
+    ema4 = (3 * ema1) - (3 * ema2) + ema3
+
+// @function Smoothed Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns SMMA smoothing.
+export smma(float src = close, simple int len) =>
+    sma = ta.sma(src, len)
+    smma = 0.0
+    smma := na(smma[1]) ? sma : (smma[1]*(len - 1) + src)/len
+
+// @function Hull Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns Hull smoothing.
+export hullma(float src=close, simple int len) =>
+    hullma = ta.wma(2*ta.wma(src, len/2) - ta.wma(src, len), math.round(math.sqrt(len)))
+
+// @function Fractal Reactive Moving Average.
+// @param x Series to use ('close' is used if no argument is supplied).
+// @param t Lookback length to use.
+// @returns FRAMA smoothing.
+export frama(float x = close, simple int t) =>
+    n3_l     = (ta.highest(high, t) - ta.lowest(low, t))/t
+    hd2_l    = ta.highest(high, t/2)
+    ld2_l    = ta.lowest(low, t/2)
+    n2_l     = (hd2_l - ld2_l)/(t/2)
+    n1_l     = (hd2_l[t/2] - ld2_l[t/2])/(t/2)
+    dim_l    = (n1_l > 0) and (n2_l > 0) and (n3_l > 0) ? (math.log(n1_l + n2_l) - math.log(n3_l))/math.log(2) : 0
+    alpha_l  = math.exp(-4.6*(dim_l - 1))
+    sc_l     = (alpha_l < 0.01 ? 0.01 : (alpha_l > 1 ? 1 : alpha_l))
+    frama_l  = x
+    frama_l := ta.cum(1) <= 2*t ? x : (x*sc_l) + nz(frama_l[1])*(1 - sc_l)
+
+// @function Kaufman's Adaptive Moving Average.
+// @param x Series to use ('close' is used if no argument is supplied).
+// @param t Lookback length to use.
+// @returns KAMA smoothing.
+export kama(float x = close, simple int t) =>
+    dist   = math.abs(x[0] - x[1])
+    signal = math.abs(x - x[t])
+    noise  = math.sum(dist, t)
+    effr   = noise!=0 ? signal/noise : 1
+    sc     = math.pow(effr*(0.666 - 0.0645) + 0.0645,2)
+    kama   = x
+    kama  := nz(kama[1]) + sc*(x - nz(kama[1]))
+
+// @function Volatility Adjusted Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns VAMA smoothing.
+export vama(float src = close, simple int len, simple int volatility_lookback=10) =>
+    mid = ta.ema(src,len)
+    dev = src - mid
+    vol_up = ta.highest(dev, volatility_lookback)
+    vol_down = ta.lowest(dev, volatility_lookback)
+    vama = mid + math.avg(vol_up, vol_down)
+
+// @function Donchian Calculation.
+// @param len Lookback length to use.
+// @returns Average of the highest price and the lowest price for the specified look-back period.
+export donchian(float src=close, simple int len) => 
+    math.avg(ta.lowest(src, len), ta.highest(src, len))
+
+// @function Jurik Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns JMA smoothing.
+export Jurik(float src = close, simple int len, simple int jurik_phase=3, simple int jurik_power=1) =>
+    phaseRatio_l = jurik_phase < -100 ? 0.5 : jurik_phase > 100 ? 2.5 : jurik_phase / 100 + 1.5
+    beta_l = 0.45 * (len - 1) / (0.45 * (len - 1) + 2)
+    alpha_l = math.pow(beta_l, jurik_power)
+    jma_l = 0.0
+    e0_l = 0.0
+    e0_l := (1 - alpha_l) * src + alpha_l * nz(e0_l[1])
+    e1_l = 0.0
+    e1_l := (src - e0_l) * (1 - beta_l) + beta_l * nz(e1_l[1])
+    e2_l = 0.0
+    e2_l := (e0_l + phaseRatio_l * e1_l - nz(jma_l[1])) * math.pow(1 - alpha_l, 2) + math.pow(alpha_l, 2) * nz(e2_l[1])
+    jma_l := e2_l + nz(jma_l[1])
+
+// @function Optimized Exponential Moving Average.
+// @param src Series to use ('close' is used if no argument is supplied).
+// @param len Lookback length to use.
+// @returns XEMA smoothing.
+export xema(float src = close, simple int len) =>
+    mult = 2.0 / (len + 1.0)
+    res = float(na)
+    res := mult * src + (1.0 - mult) * nz(res[1], src)
+
+// @function            EHMA - Exponential Hull Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Exponential Hull Moving Average (EHMA)
+export ehma(float src, simple int len) =>      // EHMA - Exponential Hull Moving Average
+    int len2 = len/2
+    ema1 = ta.ema(src, len2)
+    len1 = math.round(math.sqrt(len))
+    result = ta.ema(2 * ema1 - ta.ema(src, len), len1)
+
+// @function            Coefficient of Variation Weighted Exponential Moving Average (COVWEMA)
+// @param src           Source
+// @param len           Period
+// @returns             Coefficient of Variation Weighted Exponential Moving Average (COVWEMA)
+export covwema(float src, simple int len) =>
+    _dev = ta.stdev(src, len)
+    _ema = ta.ema(src, len)
+    _cov = _dev / _ema
+    _cWg = src * _cov
+    
+    result = math.sum(_cWg, len) / math.sum(_cov, len)
+
+// @function            Coefficient of Variation Weighted Moving Average (COVWMA) 
+// @param src           Source
+// @param len           Period
+// @returns             Coefficient of Variation Weighted Moving Average (COVWMA) 
+export covwma(float src, int len) =>
+    _dev = ta.stdev(src, len)
+    _sma = ta.sma(src, len)
+    _cov = _dev / _sma
+    _cWg = src * _cov
+    
+    result = math.sum(_cWg, len) / math.sum(_cov, len)
+
+// @function            Ehlrs Modified Fractal Adaptive Moving Average (EFRAMA) 
+// @param src           Source
+// @param len           Period
+// @param FC            Lower Shift Limit for Ehlrs Modified Fractal Adaptive Moving Average
+// @param SC            Upper Shift Limit for Ehlrs Modified Fractal Adaptive Moving Average
+// @returns             Ehlrs Modified Fractal Adaptive Moving Average (EFRAMA) 
+export eframa(float src, int len, int FC, int SC) =>
+    float result = 0.0
+    len1 = len / 2
+    e = 2.7182818284590452353602874713527
+    w = math.log(2 / (SC + 1)) / math.log(e)  // Natural logarithm (ln(2/(SC+1))) workaround
+    H1 = ta.highest(high, len1)
+    L1 = ta.lowest(low, len1)
+    N1 = (H1 - L1) / len1
+    H2 = ta.highest(high, len1)[len1]
+    L2 = ta.lowest(low, len1)[len1]
+    N2 = (H2 - L2) / len1
+    H3 = ta.highest(high, len)
+    L3 = ta.lowest(low, len)
+    N3 = (H3 - L3) / len
+    dimen1 = (math.log(N1 + N2) - math.log(N3)) / math.log(2)
+    dimen = N1 > 0 and N2 > 0 and N3 > 0 ? dimen1 : nz(dimen1[1])
+    alpha1 = math.exp(w * (dimen - 1))
+    oldalpha = alpha1 > 1 ? 1 : alpha1 < 0.01 ? 0.01 : alpha1
+    oldN = (2 - oldalpha) / oldalpha
+    N = (SC - FC) * (oldN - 1) / (SC - 1) + FC
+    alpha_ = 2 / (N + 1)
+    alpha = alpha_ < 2 / (SC + 1) ? 2 / (SC + 1) : alpha_ > 1 ? 1 : alpha_
+    
+    result := (1 - alpha) * nz(result[1]) + alpha * src
+
+// @function            Exponential Triangular Moving Average (ETMA)
+// @param src           Source
+// @param len           Period
+// @returns             Exponential Triangular Moving Average (ETMA)
+export etma(float src, simple int len) =>
+    result = ta.ema(ta.ema(src, len), len)
+
+// @function            RMA - RSI Moving average
+// @param src           Source
+// @param len           Period
+// @returns             RSI Moving average (RMA)
+export rma(float src, simple int len) =>
+    float result = 0.0
+    alpha = 1 / len
+    result := alpha * src + (1 - alpha) * nz(result[1])
+
+// @function            THMA - Triple Hull Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Triple Hull Moving Average (THMA)
+export thma(float src, simple int len) =>
+    float result = 0.0
+    result := ta.wma(ta.wma(src, len / 3) * 3 - ta.wma(src, len / 2) - ta.wma(src, len), len)
+
+// @function            Variable Index Dynamic Average (VIDYA)
+// @param src           Source
+// @param len           Period
+// @returns             Variable Index Dynamic Average (VIDYA)
+export vidya(float src, simple int len) =>
+    float result = 0.0  
+    _cmo = ta.cmo(src, len) / 100  //Chande Momentum Oscillator
+    var _factor = 2 / (len + 1)
+    result := src * _factor * math.abs(_cmo) + nz(result[1]) * (1 - _factor * math.abs(_cmo))
+
+// @function            Zero-Lag Simple Moving Average (ZSMA)
+// @param src           Source
+// @param len           Period
+// @returns             Zero-Lag Simple Moving Average (ZSMA)
+export zsma(float src, simple int len) =>
+    float result = 0.0  
+    var _l = (len + 1) / 2
+    _srcL = src + nz(ta.mom(src, _l))
+    result := ta.sma(_srcL, len)
+
+// @function            Zero-Lag Exponential Moving Average (ZEMA)
+// @param src           Source
+// @param len           Period
+// @returns             Zero-Lag Exponential Moving Average (ZEMA)
+export zema(float src, simple int len) =>
+    float result = 0.0  
+    var _l = (len + 1) / 2
+    _srcL = src + nz(ta.mom(src, _l))
+    result := ta.ema(_srcL, len)
+
+// @function            EVWMA - Elastic Volume Weighted Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Elastic Volume Weighted Moving Average (EVWMA)
+export evwma(float src, simple int len) =>
+    // Copyright © LazyBear
+    float result = 0.0     
+    nbfs = math.sum(volume, len)
+    result := nz(result[1]) * (nbfs - volume) / nbfs + volume * src / nbfs
+    
+// @function            Tillson T3
+// @param src           Source
+// @param len           Period
+// @param a1_t3         Tillson T3 Volume Factor
+// @returns             Tillson T3
+export tt3(float src, simple int len, float a1_t3=0.7) =>
+    float result = 0.0      
+    result := -a1_t3 * a1_t3 * a1_t3 * ta.ema(ta.ema(ta.ema(ta.ema(ta.ema(ta.ema(src, len), len), len), len), len), len) + (3 * a1_t3 * a1_t3 + 3 * a1_t3 * a1_t3 * a1_t3) * ta.ema(ta.ema(ta.ema(ta.ema(ta.ema(src, len), len), len), len), len) + (-6 * a1_t3 * a1_t3 - 3 * a1_t3 - 3 * a1_t3 * a1_t3 * a1_t3) * ta.ema(ta.ema(ta.ema(ta.ema(src, len), len), len), len) + (1 + 3 * a1_t3 + a1_t3 * a1_t3 * a1_t3 + 3 * a1_t3 * a1_t3) * ta.ema(ta.ema(ta.ema(src, len), len), len)
+
+// @function            GMA - Geometric Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Geometric Moving Average (GMA)
+export gma(float src, simple int len) =>
+    float result = 0.0      
+    sum = src
+    for i = 1 to len - 1 by 1
+        sum *= src[i]
+        sum
+    result := math.pow(sum, 1 / len)
+
+// @function            WWMA - Welles Wilder Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Welles Wilder Moving Average (WWMA)
+export wwma(float src, simple int len) =>
+    float result = 0.0       
+    result := (nz(result[1]) * (len - 1) + src) / len
+
+// @function            Corrective Moving average (CMA)
+// @param src           Source
+// @param len           Period
+// @returns             Corrective Moving average (CMA)
+export cma(float src, simple int len) =>
+    float result = 0.0    
+    sma_ = ta.sma(src, len)
+    _cma = sma_
+    v1 = ta.variance(src, len)
+    v2 = math.pow(nz(_cma[1], _cma) - sma_, 2)
+    v3 = v1 == 0 or v2 == 0 ? 1 : v2 / (v1 + v2)
+    var tolerance = math.pow(10, -5)
+    float err = 1
+    // Gain Factor
+    float kPrev = 1
+    float k = 1
+    for i = 0 to 5000 by 1
+        if err > tolerance
+            k := v3 * kPrev * (2 - kPrev)
+            err := kPrev - k
+            kPrev := k
+            kPrev
+    _cma := nz(_cma[1], src) + k * (sma_ - nz(_cma[1], src))
+
+// @function            Exponentially Deviating Moving Average (MZ EDMA)
+// @param src           Source
+// @param len           Period
+// @returns             Exponentially Deviating Moving Average (MZ EDMA)
+export edma(float src, simple int len) =>
+    var hexp = float(na)
+    var lexp = float(na)
+    var _hma = float(na)
+    var _edma = float(na)
+    float smoothness = 1.0  // Increasing smoothness will result in MA same as EMA
+    
+    h_len = int(len/1.5)    // Length to be used in final calculation of Hull Moving Average
+    // Defining Exponentially Expanding Moving Line
+    hexp := na(hexp[1]) ? src : src >= hexp[1] ? src : hexp[1] + (src - hexp[1]) * (smoothness / (len + 1))
+    // Defining Exponentially Contracting Moving Line
+    lexp := na(lexp[1]) ? hexp : src <= lexp[1] ? hexp : lexp[1] + (src - lexp[1]) * (smoothness / (len + 1))
+    // Calculating Hull Moving Average of resulted Exponential Moving Line with 3/2 of total length
+    _hma := ta.wma(2 * ta.wma(lexp, h_len / 2) - ta.wma(lexp, h_len), math.round(math.sqrt(h_len)))
+
+// @function            Range EMA (REMA)
+// @param src           Source
+// @param len           Period
+// @returns             Range EMA (REMA)
+export rema(float src, simple int len) => 
+    float result = 0.0  
+    alpha = 2 / (1 + len)
+    weight = high - low
+    weight := weight == 0 ? syminfo.pointvalue : weight
+    num = 0.0
+    den = 0.0
+    num := na(num[1]) ? weight * src : num[1] + alpha * (weight * src - num[1])
+    den := na(den[1]) ? weight : den[1] + alpha * (weight - den[1])
+    result := num / den
+
+// @function            Sine-Weighted Moving Average (SW-MA)
+// @param src           Source
+// @param len           Period
+// @returns             Sine-Weighted Moving Average (SW-MA)
+export sw_ma(float src, int len) =>
+    float result = 0.0
+    PI_ = 2 * math.asin(1)
+    sum = 0.0
+    weightSum = 0.0
+    
+    for i = 0 to len - 1 by 1
+        weight = math.sin((i + 1) * PI_ / (len + 1))
+        sum += nz(src[i]) * weight
+        weightSum += weight
+        weightSum
+    result := sum / weightSum
+
+//{ MAMA & FAMA & HKAMA Pre-requisits 
+// Original Hilbert by everget : https://www.tradingview.com/script/aaWzn9bK-Ehlers-MESA-Adaptive-Moving-Averages-MAMA-FAMA/
+PI = 2 * math.asin(1)
+hilbertTransform(src) =>
+    0.0962 * src + 0.5769 * nz(src[2]) - 0.5769 * nz(src[4]) - 0.0962 * nz(src[6])
+
+computeComponent(src, mesaPeriodMult) =>
+    hilbertTransform(src) * mesaPeriodMult
+
+computeAlpha(src, fastLimit, slowLimit) =>
+    mesaPeriod = 0.0
+    mesaPeriodMult = 0.075 * nz(mesaPeriod[1]) + 0.54
+
+    smooth = 0.0
+    smooth := (4 * src + 3 * nz(src[1]) + 2 * nz(src[2]) + nz(src[3])) / 10
+
+    detrender = 0.0
+    detrender := computeComponent(smooth, mesaPeriodMult)
+
+    // Compute InPhase and Quadrature components
+    I1 = nz(detrender[3])
+    Q1 = computeComponent(detrender, mesaPeriodMult)
+
+    // Advance the phase of I1 and Q1 by 90 degrees
+    jI = computeComponent(I1, mesaPeriodMult)
+    jQ = computeComponent(Q1, mesaPeriodMult)
+
+    I2 = 0.0
+    Q2 = 0.0
+
+    // Phasor addition for 3 bar averaging
+    I2 := I1 - jQ
+    Q2 := Q1 + jI
+
+    // Smooth the I and Q components before applying the discriminator
+    I2 := 0.2 * I2 + 0.8 * nz(I2[1])
+    Q2 := 0.2 * Q2 + 0.8 * nz(Q2[1])
+
+    // Homodyne Discriminator
+    Re = I2 * nz(I2[1]) + Q2 * nz(Q2[1])
+    Im = I2 * nz(Q2[1]) - Q2 * nz(I2[1])
+
+    Re := 0.2 * Re + 0.8 * nz(Re[1])
+    Im := 0.2 * Im + 0.8 * nz(Im[1])
+
+    if Re != 0 and Im != 0
+        mesaPeriod := 2 * PI / math.atan(Im / Re)
+        mesaPeriod
+
+    if mesaPeriod > 1.5 * nz(mesaPeriod[1])
+        mesaPeriod := 1.5 * nz(mesaPeriod[1])
+        mesaPeriod
+
+    if mesaPeriod < 0.67 * nz(mesaPeriod[1])
+        mesaPeriod := 0.67 * nz(mesaPeriod[1])
+        mesaPeriod
+
+    if mesaPeriod < 6
+        mesaPeriod := 6
+        mesaPeriod
+
+    if mesaPeriod > 50
+        mesaPeriod := 50
+        mesaPeriod
+
+    mesaPeriod := 0.2 * mesaPeriod + 0.8 * nz(mesaPeriod[1])
+
+    phase = 0.0
+
+    if I1 != 0
+        phase := 180 / PI * math.atan(Q1 / I1)
+        phase
+
+    deltaPhase = nz(phase[1]) - phase
+
+    if deltaPhase < 1
+        deltaPhase := 1
+        deltaPhase
+
+    alpha = fastLimit / deltaPhase
+
+    if alpha < slowLimit
+        alpha := slowLimit
+        alpha
+    [alpha, alpha / 2.0]
+// }
+
+    
+// @function            MAMA - MESA Adaptive Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             MESA Adaptive Moving Average (MAMA)
+export mama(float src, int len) =>
+    float result = 0.0
+    er = math.abs(ta.change(src, len)) / math.sum(math.abs(ta.change(src)), len)
+    [a, b] = computeAlpha(src, er, er * 0.1)
+    result := a * src + (1 - a) * nz(result[1])
+
+// @function            FAMA - Following Adaptive Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Following Adaptive Moving Average (FAMA)
+export fama(float src, int len) =>
+    float result = 0.0
+    var float mama = 0.0
+    var float fama = 0.0
+    er = math.abs(ta.change(src, len)) / math.sum(math.abs(ta.change(src)), len)
+    [a, b] = computeAlpha(src, er, er * 0.1)
+    mama := a * src + (1 - a) * nz(mama[1])
+    fama := b * mama + (1 - b) * nz(fama[1])
+    result := fama
+
+// @function            HKAMA - Hilbert based Kaufman's Adaptive Moving Average
+// @param src           Source
+// @param len           Period
+// @returns             Hilbert based Kaufman's Adaptive Moving Average (HKAMA)
+export hkama(float src, int len) =>
+    float result = 0.0
+    er = math.abs(ta.change(src, len)) / math.sum(math.abs(ta.change(src)), len)
+    [a, b] = computeAlpha(src, er, er * 0.1)
+    alpha = math.pow(er * (b - a) + a, 2)
+    result := alpha * src + (1 - alpha) * nz(result[1])
+
+// @function                    Abstract proxy function that invokes the calculation of a moving average according to type
+// @param type                  (string) Type of moving average
+// @param src                   (float) Source of series (close, high, low, etc.)
+// @param len                   (int) Period of loopback to calculate the average
+// @param lsmaOffset            (int) Offset for Least Squares MA
+// @param inputAlmaOffset       (float) Offset for ALMA
+// @param inputAlmaSigma        (float) Sigma for ALMA
+// @param FC                    (int) Lower Shift Limit for Ehlrs Modified Fractal Adaptive Moving Average
+// @param SC                    (int) Upper Shift Limit for Ehlrs Modified Fractal Adaptive Moving Average
+// @param a1_t3                 (float) Tillson T3 Volume Factor
+// @param fixedTfInput          (bool) Use a fixed time period in Rolling VWAP   
+// @param daysInput             (int) Days in Rolling VWAP
+// @param hoursInput            (int) Hours in Rolling VWAP 
+// @param minsInput             (int) Minutrs in Rolling VWAP
+// @param minBarsInput          (int) Bars in Rolling VWAP
+// @param lambda                (float) Regularization Constant in Regularized EMA
+// @param volumeWeighted        (bool) Apply volume weighted calculation in selected moving average
+// @param gamma_aarma           (float) Gamma for Adaptive Autonomous Recursive Moving Average
+// @param smooth                (float) Smooth for Adaptive Least Squares
+// @param linweight             (float) Weight for Volume Weighted Moving Average
+// @param volatility_lookback   (int) Loopback for Volatility Adjusted Moving Average
+// @param jurik_phase           (int) Phase for Jurik Moving Average
+// @param jurik_power           (int) Power for Jurik Moving Average
+// @returns                     (float) Moving average
+export getMovingAverage(
+  simple string type, float src, simple int len,
+  simple int lsmaOffset=0,
+  simple float inputAlmaOffset=0.85, simple float inputAlmaSigma=6, 
+  int FC=8, int SC=8, 
+  float a1_t3=0.7,
+  simple bool fixedTfInput=false, simple int daysInput=1, simple int hoursInput=0, simple int minsInput=0, simple int minBarsInput=10,
+  simple float lambda=0.5,
+  simple float factor=1.7,
+  simple int offset_epma=4,
+  simple bool volumeWeighted=false,
+  simple float gamma_aarma=3,
+  simple float smooth=1.5,
+  simple int linweight=6,
+  simple int volatility_lookback=10,
+  simple int jurik_phase=3, 
+  simple int jurik_power=1) =>
+    
+    srcXvol = src
+    if volumeWeighted
+        srcXvol := src * volume
+        
+    if type == EMA
+        ta.ema(srcXvol, len)/(volumeWeighted ? ta.ema(volume, len) : 1)
+    else if type == SMA
+        ta.sma(srcXvol, len)/(volumeWeighted ? ta.sma(volume, len) : 1)
+    else if type == RMA
+        ta.rma(srcXvol, len)/(volumeWeighted ? ta.rma(volume, len) : 1)
+    else if type == WMA
+        ta.wma(srcXvol, len)/(volumeWeighted ? ta.wma(volume, len) : 1)
+    else if type == EDSMA
+        EDSMA(srcXvol, len)/(volumeWeighted ? EDSMA(volume, len) : 1)
+    else if type == DEMA
+        dema(srcXvol, len)/(volumeWeighted ? dema(volume, len) : 1)
+    else if type == TEMA
+        tema(srcXvol, len)/(volumeWeighted ? tema(volume, len) : 1)
+    else if type == SMMA
+        smma(srcXvol, len)/(volumeWeighted ? smma(volume, len) : 1)
+    else if type == HMA
+        hullma(srcXvol, len)/(volumeWeighted ? hullma(volume, len) : 1)
+    else if type == FRAMA
+        frama(srcXvol, len)/(volumeWeighted ? frama(volume, len) : 1)
+    else if type == KAMA
+        kama(srcXvol, len)/(volumeWeighted ? kama(volume, len) : 1)
+    else if type == VAMA
+        vama(srcXvol, len, volatility_lookback)/(volumeWeighted ? vama(volume, len, volatility_lookback) : 1)
+    else if type == DONCHIAN
+        donchian(srcXvol, len)/(volumeWeighted ? donchian(volume, len) : 1)
+    else if type == JURIK
+        Jurik(srcXvol, len, jurik_phase, jurik_power)/(volumeWeighted ? Jurik(volume, len, jurik_phase, jurik_power) : 1)
+    else if type == XEMA
+        xema(srcXvol, len)/(volumeWeighted ? xema(volume, len) : 1)
+    else if type == EHMA
+        ehma(srcXvol, len)/(volumeWeighted ? ehma(volume, len) : 1)
+    else if type == ALMA
+        ta.alma(srcXvol, len, inputAlmaOffset, inputAlmaSigma)/(volumeWeighted ? ta.alma(volume, len, inputAlmaOffset, inputAlmaSigma) : 1)
+    else if type == COVWEMA
+        covwema(srcXvol, len)/(volumeWeighted ? covwema(volume, len) : 1)
+    else if type == COVWMA
+        covwma(srcXvol, len)/(volumeWeighted ? covwma(volume, len) : 1)
+    else if type == EFRAMA
+        eframa(srcXvol, len, FC, SC)/(volumeWeighted ? eframa(volume, len, FC, SC) : 1)
+    else if type == ETMA
+        etma(srcXvol, len)/(volumeWeighted ? etma(volume, len) : 1)
+    else if type == LSMA
+        ta.linreg(srcXvol, len, lsmaOffset)/(volumeWeighted ? ta.linreg(volume, len, lsmaOffset) : 1)
+    else if type == RSIMA
+        rma(srcXvol, len)/(volumeWeighted ? rma(volume, len) : 1)
+    else if type == THMA 
+        thma(srcXvol, len)/(volumeWeighted ? thma(volume, len) : 1)
+    else if type == VIDYA 
+        vidya(srcXvol, len)/(volumeWeighted ? vidya(volume, len) : 1)
+    else if type == VWMA  
+        ta.vwma(srcXvol, len)/(volumeWeighted ? ta.vwma(volume, len) : 1)
+    else if type == ZEMA  
+        zema(srcXvol, len)/(volumeWeighted ? zema(volume, len) : 1)
+    else if type == ZSMA  
+        zsma(srcXvol, len)/(volumeWeighted ? zsma(volume, len) : 1)
+    else if type == EVWMA 
+        evwma(srcXvol, len)/(volumeWeighted ? evwma(volume, len) : 1)
+    else if type == TT3 
+        tt3(srcXvol, len, a1_t3)/(volumeWeighted ? tt3(volume, len, a1_t3) : 1)
+    else if type == GMA 
+        gma(srcXvol, len)/(volumeWeighted ? gma(volume, len) : 1)
+    else if type == WWMA
+        wwma(srcXvol, len)/(volumeWeighted ? wwma(volume, len) : 1)
+    else if type == CMA   
+        cma(srcXvol, len)/(volumeWeighted ? cma(volume, len) : 1)
+    else if type == EDMA 
+        edma(srcXvol, len)/(volumeWeighted ? edma(volume, len) : 1)
+    else if type == REMA 
+        rema(srcXvol, len)/(volumeWeighted ? rema(volume, len) : 1)
+    else if type == SW_MA 
+        sw_ma(srcXvol, len)/(volumeWeighted ? sw_ma(volume, len) : 1)
+    else if type == MAMA  
+        mama(srcXvol, len)/(volumeWeighted ? mama(volume, len) : 1)
+    else if type == FAMA 
+        fama(srcXvol, len)/(volumeWeighted ? fama(volume, len) : 1)
+    else if type == HKAMA 
+        hkama(srcXvol, len)/(volumeWeighted ? hkama(volume, len) : 1)
+    else if type == MEDIAN
+        ta.median(srcXvol, len)/(volumeWeighted ? ta.median(volume, len) : 1)
+    else if type == VWAP
+        ta.vwap(srcXvol)/(volumeWeighted ? ta.vwap(volume) : 1)
+    else if type == RVWAP 
+        rvwap(srcXvol, fixedTfInput, minsInput, hoursInput, daysInput, minBarsInput)/(volumeWeighted ? rvwap(volume, fixedTfInput, minsInput, hoursInput, daysInput, minBarsInput) : 1)
+    else if type == TRSMA
+        ta.sma(ta.sma(srcXvol, math.ceil(len / 2)), math.floor(len / 2) + 1) / (volumeWeighted ? ta.sma(ta.sma(volume, math.ceil(len / 2)), math.floor(len / 2) + 1) : 1)
+    else if type == TREMA
+        ta.ema(ta.ema(srcXvol, math.ceil(len / 2)), math.floor(len / 2) + 1) / (volumeWeighted ? ta.ema(ta.ema(volume, math.ceil(len / 2)), math.floor(len / 2) + 1) : 1)
+    else if type == CORMA
+        correlationMa(srcXvol, len, factor)/(volumeWeighted ? correlationMa(volume, len, factor) : 1)
+    else if type == REGMA
+        regma(srcXvol, len, lambda)/(volumeWeighted ? regma(volume, len, lambda) : 1)
+    else if type == REPMA 
+        repma(srcXvol, len)/(volumeWeighted ? repma(volume, len) : 1)
+    else if type == SWMA
+        ta.swma(srcXvol)/(volumeWeighted ? ta.swma(volume) : 1)
+    else if type == EPMA
+        epma(srcXvol, len, offset_epma)/(volumeWeighted ? epma(volume, len, offset_epma) : 1)
+    else if type == LC_LSMA
+        lc_lsma(srcXvol, len)/(volumeWeighted ? lc_lsma(volume, len) : 1)
+    else if type == AARMA
+        aarma(srcXvol, len, gamma_aarma)/(volumeWeighted ? aarma(volume, len, gamma_aarma) : 1)
+    else if type == ALSMA
+        alsma(srcXvol, len, smooth)/(volumeWeighted ? alsma(volume, len, smooth) : 1)
+    else if type == AHMA
+        ahma(srcXvol, len)/(volumeWeighted ? ahma(volume, len) : 1)
+    else if type == ADEMA
+        adema(srcXvol)/(volumeWeighted ? adema(volume) : 1)
+    else if type == AUTOL
+        autol(srcXvol, len)/(volumeWeighted ? autol(volume, len) : 1)
+    else if type == FIBOWMA
+        fibowma(srcXvol, len)/(volumeWeighted ? fibowma(volume, len) : 1)
+    else if type == FISHLSMA
+        fisherlsma(srcXvol, len)/(volumeWeighted ? fisherlsma(volume, len) : 1)
+    else if type == LEOMA
+        leoma(srcXvol, len)/(volumeWeighted ? leoma(volume, len) : 1)
+    else if type == LINWMA
+        linwma(srcXvol, len, linweight)/(volumeWeighted ? linwma(volume, len, linweight) : 1)
+    else if type == MCMA
+        mcma(srcXvol, len)/(volumeWeighted ? mcma(volume, len) : 1)
+    else if type == SRWMA
+        srwma(srcXvol, len)/(volumeWeighted ? srwma(volume, len) : 1)
+// ———————————————————————————————————————— }
+
+// ———————————————————————————————————————— Only for benchmark {
+// Print table at the end of chart
+// if barstate.islast
+//     var table t = table.new(position.middle_right, 1, 1)
+//     var txt = str.tostring(timePerBarInMs, "ms/bar: #.######\n") +
+//       str.tostring(totalTimeInMs, "Total time (ms): #,###.######\n") + 
+//       str.tostring(barsTimed + barsNotTimed, "Bars analyzed: #")
+//     table.cell(t, 0, 0, txt, bgcolor = color.yellow, text_halign = text.align_right)
+// ———————————————————————————————————————— }
+
+// ———————————————————————————————————————— Example {
+
+// indicator("Moving Average Compendium Refurbished", shorttitle='MA Compendium Refurbished', format=format.price, precision=2, overlay=true)
+
+// import andre_007/MovingAveragesProxy/29 as MaProxy
+
+// // ———————————————————————————————————————— Constants {
+// var string AARMA    = 'Adaptive Autonomous Recursive Moving Average'
+// var string ADEMA    = '* Alpha-Decreasing Exponential Moving Average'
+// var string AHMA     = 'Ahrens Moving Average'
+// var string ALMA     = 'Arnaud Legoux Moving Average'
+// var string ALSMA    = 'Adaptive Least Squares'
+// var string AUTOL    = 'Auto-Line'
+// var string CMA      = 'Corrective Moving average'
+// var string CORMA    = 'Correlation Moving Average Price'
+// var string COVWEMA  = 'Coefficient of Variation Weighted Exponential Moving Average'
+// var string COVWMA   = 'Coefficient of Variation Weighted Moving Average'
+// var string DEMA     = 'Double Exponential Moving Average'
+// var string DONCHIAN = 'Donchian Middle Channel'
+// var string EDMA     = 'Exponentially Deviating Moving Average'
+// var string EDSMA    = 'Ehlers Dynamic Smoothed Moving Average'
+// var string EFRAMA   = '* Ehlrs Modified Fractal Adaptive Moving Average'
+// var string EHMA     = 'Exponential Hull Moving Average'
+// var string EMA      = 'Exponential Moving Average'
+// var string EPMA     = 'End Point Moving Average'
+// var string ETMA     = 'Exponential Triangular Moving Average'
+// var string EVWMA    = 'Elastic Volume Weighted Moving Average'
+// var string FAMA     = 'Following Adaptive Moving Average'
+// var string FIBOWMA  = 'Fibonacci Weighted Moving Average'
+// var string FISHLSMA = 'Fisher Least Squares Moving Average'
+// var string FRAMA    = 'Fractal Adaptive Moving Average'
+// var string GMA      = 'Geometric Moving Average'
+// var string HKAMA    = 'Hilbert based Kaufman\'s Adaptive Moving Average'
+// var string HMA      = 'Hull Moving Average'
+// var string JURIK    = 'Jurik Moving Average'
+// var string KAMA     = 'Kaufman\'s Adaptive Moving Average'
+// var string LC_LSMA  = '1LC-LSMA (1 line code lsma with 3 functions)'
+// var string LEOMA    = 'Leo Moving Average'
+// var string LINWMA   = 'Linear Weighted Moving Average'
+// var string LSMA     = 'Least Squares Moving Average'
+// var string MAMA     = 'MESA Adaptive Moving Average'
+// var string MCMA     = 'McNicholl Moving Average'
+// var string MEDIAN   = 'Median'
+// var string REGMA    = 'Regularized Exponential Moving Average'
+// var string REMA     = 'Range EMA'
+// var string REPMA    = 'Repulsion Moving Average'
+// var string RMA      = 'Relative Moving Average'
+// var string RSIMA    = 'RSI Moving average'
+// var string RVWAP    = '* Rolling VWAP'
+// var string SMA      = 'Simple Moving Average'
+// var string SMMA     = 'Smoothed Moving Average'
+// var string SRWMA    = 'Square Root Weighted Moving Average'
+// var string SW_MA    = 'Sine-Weighted Moving Average'
+// var string SWMA     = '* Symmetrically Weighted Moving Average'
+// var string TEMA     = 'Triple Exponential Moving Average'
+// var string THMA     = 'Triple Hull Moving Average'
+// var string TREMA    = 'Triangular Exponential Moving Average'
+// var string TRSMA    = 'Triangular Simple Moving Average'
+// var string TT3      = 'Tillson T3'
+// var string VAMA     = 'Volatility Adjusted Moving Average'
+// var string VIDYA    = 'Variable Index Dynamic Average'
+// var string VWAP     = '* VWAP'
+// var string VWMA     = 'Volume-weighted Moving Average'
+// var string WMA      = 'Weighted Moving Average'
+// var string WWMA     = 'Welles Wilder Moving Average'
+// var string XEMA     = 'Optimized Exponential Moving Average'
+// var string ZEMA     = 'Zero-Lag Exponential Moving Average'
+// var string ZSMA     = 'Zero-Lag Simple Moving Average'
+// // ———————————————————————————————————————— }
+
+// // ———————————————————————————————————————— Inputs {
+// string inputTypeMa = input.string(SMA, 'Type', 
+//   options=[AARMA,ALSMA,AHMA,ADEMA,ALMA,AUTOL,COVWEMA,COVWMA,CMA,CORMA,DEMA,DONCHIAN,EFRAMA,EDSMA,EVWMA,EPMA,EDMA,EHMA,EMA,ETMA,FIBOWMA,FISHLSMA,FAMA,FRAMA,GMA,HKAMA,HMA,JURIK,KAMA,LC_LSMA,LEOMA,LSMA,LINWMA,MEDIAN,MAMA,MCMA,XEMA,REMA,REGMA,RMA,REPMA,RVWAP,RSIMA,SMA,SW_MA,SRWMA,SMMA,SWMA,TT3,TREMA,TRSMA,TEMA,THMA,VIDYA,VAMA,VWAP,WMA,WWMA,ZEMA,ZSMA])
+// int inputLengthMa = input.int(55, minval=1, title='Length')
+// float inputSourceMa = input.source(close, title='Source')
+// int inputOffsetMa = input.int(title='Offset', defval=0, minval=-500, maxval=500)
+
+// var string GRP_VWMA = 'Volume Weighted Moving Average'
+// var string GRP_VWMA_TOOLTIP = 'The most common "Volume Weighted Moving Average" is a Simple Moving Average of Price x Volume, divided by Simple Moving Average of Volume. \n' + 
+//   'Enabling this checkbox, it\'s possible to have other types and less common moving averages weighted by volume, for example, Exponencial Volume Weighted Moving Average, Alma Volume Weighted Moving Average, etc...'
+// applyVolumeWeighted = input.bool(title="Volume Weighted Moving Average?", defval=false, group=GRP_VWMA, tooltip=GRP_VWMA_TOOLTIP)
+
+// var string GROUP_COLORS = 'Colors'
+
+// var inputLineColors         = input.bool(title="Change line colors when moving average is below or above source?", defval=true, group=GROUP_COLORS)
+// var inputLineBull           = input.color(#3af13c, 'Bullish', inline='A', group=GROUP_COLORS)
+// var inputLineBear           = input.color(#bd0000, 'Bearish', inline='A', group=GROUP_COLORS)
+// var inputLineDefault        = input.color(color.white, 'Neutral', inline='A', group=GROUP_COLORS)
+
+// var inputBarColors          = input.bool(title="Change bar colors when source are bellow or above MA?", defval=true, group=GROUP_COLORS)
+// var inputBarBull            = input.color(#3af13c, 'Bullish', inline='B', group=GROUP_COLORS)
+// var inputBarBear            = input.color(#bd0000, 'Bearish', inline='B', group=GROUP_COLORS)
+// // ———————————————————————————————————————— }
+
+// // ———————————————————————————————————————— Functions {
+// // @function applyBarColor
+// // @description Returns a bull color if price source is greater than a moving average.
+// //   Otherwise returns a bear color.
+// // @returns Color
+// applyBarColor(series float src, series float avg) =>
+
+//     _barColor = if inputBarColors
+//         if src >= nz(avg)
+//             inputBarBull
+//         else
+//             inputBarBear
+//     else
+//         na
+            
+// // @function applyLineColor
+// // @description Returns a bull color if moving average is greater than price source.
+// //   Otherwise returns a bear color.
+// // @returns Color
+// applyLineColor(series float src, series float avg) =>
+
+//     _lineColor = if inputLineColors
+//         if src >= nz(avg)
+//             inputLineBull
+//         else
+//             inputLineBear
+//     else
+//         inputLineDefault
+// // ———————————————————————————————————————— }            
+
+// // ———————————————————————————————————————— Calcs {
+// movingAverage = MaProxy.getMovingAverage(type=inputTypeMa, src=inputSourceMa, len=inputLengthMa, volumeWeighted=applyVolumeWeighted)
+// // ———————————————————————————————————————— }
+
+// // ———————————————————————————————————————— Graphics {
+// plot = plot(movingAverage, title="Moving Average",
+//   color=applyLineColor(inputSourceMa, movingAverage),
+//   offset=inputOffsetMa, 
+//   linewidth=1)
+
+// barcolor( applyBarColor(inputSourceMa, movingAverage) )
+// // ———————————————————————————————————————— }
+
